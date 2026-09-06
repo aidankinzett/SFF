@@ -161,9 +161,25 @@ async def get_request(
 
 
 def get_request_raw(url):
+    """Fetch raw bytes, or None if the server did not return a 2xx body.
+
+    The status check matters: every caller feeds the result straight into
+    a .manifest file, and Steam's CDN answers with an HTML error page on
+    504/403 rather than an empty body. Returning that page as "content"
+    wrote the error page into depotcache as a corrupt manifest, which was
+    then found on disk and reused by later runs. Callers treat None as
+    "try the next source", which is the correct outcome here.
+    """
     while True:
         try:
-            return httpx.get(url, timeout=120).content
+            resp = httpx.get(url, timeout=120)
+            if resp.status_code < 200 or resp.status_code >= 300:
+                logger.debug(
+                    "get_request_raw: HTTP %s for %s (%d bytes discarded)",
+                    resp.status_code, url, len(resp.content or b""),
+                )
+                return None
+            return resp.content
         except httpx.HTTPError as e:
             print(f"Network error: {repr(e)}")
             if not prompt_confirm("Try again?"):
