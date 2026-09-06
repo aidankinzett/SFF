@@ -39,7 +39,7 @@ die() {
 # extra — the AppImage is self-contained (like the Windows EXE).
 #
 # One-time install command:
-#   sudo apt install python3.12 python3.12-venv python3.12-dev wget \
+#   sudo apt install python3.12 python3.12-venv python3.12-dev wget git binutils \
 #       libfuse2 libatomic1 libnss3 libnspr4 libxkbfile1 \
 #       libxkbcommon-x11-0 libxcb-cursor0 libxcb-xkb1 libxcb-image0 \
 #       libxcb-keysyms1 libxcb-util1 libxcb-render-util0 libxcb-icccm4 \
@@ -48,6 +48,12 @@ echo "==> Checking prerequisites..."
 MISSING_PKGS=()
 command -v python3.12 >/dev/null 2>&1 || MISSING_PKGS+=("python3.12 python3.12-venv python3.12-dev")
 command -v wget       >/dev/null 2>&1 || MISSING_PKGS+=("wget")
+# git: requirements-linux.txt pins InquirerPy as a git+https VCS dependency, so
+# pip shells out to git during step 2.
+command -v git        >/dev/null 2>&1 || MISSING_PKGS+=("git")
+# objdump (binutils): PyInstaller requires it on Linux and aborts step 3 without
+# it — after the ~10 minute dependency install, which is a slow way to find out.
+command -v objdump    >/dev/null 2>&1 || MISSING_PKGS+=("binutils")
 for _pkg in libfuse2 libatomic1 libnss3 libnspr4 libxkbfile1 \
             libxkbcommon-x11-0 libxcb-cursor0 libxcb-xkb1 libxcb-image0 \
             libxcb-keysyms1 libxcb-util1 libxcb-render-util0 libxcb-icccm4 \
