@@ -640,7 +640,7 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
         # "would block forever". Spin a throwaway provider INSIDE the
         # executor for the timed app-info hit, and keep the local
         # `provider` (built on this thread) for the downstream
-        # ManifestDownloader / cdn calls below.
+        # ManifestDownloader calls below.
         try:
             provider = create_provider_for_current_thread()
             from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FT
@@ -703,7 +703,6 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
             except Exception as e:
                 logger.debug("download_dlc_oureveryday: key db load failed: %s", e)
 
-        cdn = None
         downloader = None
         saved = 0
         new_lines = []
@@ -713,11 +712,9 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
                 "app_id": dlc_appid, "status": "Downloading DLC manifests", "progress": 50
             }))
             downloader = ManifestDownloader(provider, _Path(steam_path))
-            try:
-                cdn = downloader.get_cdn_client()
-            except Exception as e:
-                logger.debug("download_dlc_oureveryday: cdn client failed: %s", e)
-
+            # No get_cdn_client() here: download_single_manifest ignores the
+            # cdn_client argument, and building one on this thread always
+            # burned ~125s on gevent timeouts (see the Step 4 note below).
             for depot_id, gid in dlc_depots:
                 key = keys_dict.get(depot_id)
                 if not key:
@@ -731,7 +728,7 @@ def _bridge_download_dlc_oureveryday(bridge, dlc_appid, parent_appid):
                     continue
                 try:
                     raw = downloader.download_single_manifest(
-                        depot_id, gid, cdn_client=cdn, app_id=str(parent_appid),
+                        depot_id, gid, app_id=str(parent_appid),
                     )
                 except Exception as e:
                     logger.debug("download_dlc_oureveryday: depot %s fetch raised: %s", depot_id, e)
@@ -1742,12 +1739,16 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                     _dc2 = steam_path / "depotcache"
                     _dc2.mkdir(parents=True, exist_ok=True)
                     _eff_app_id = str(parsed.app_id or app_id)
-                    _cdn2 = None
-                    if _provider:
-                        try:
-                            _cdn2 = _md2.get_cdn_client()
-                        except Exception as _ce:
-                            logger.debug("CDN client init failed (non-fatal): %s", _ce)
+                    # No Steam CDNClient here on purpose. download_single_manifest
+                    # pulls manifests over plain HTTP (GMRC mirrors -> GitHub ->
+                    # ManifestHub -> steampipe with a request code) and ignores the
+                    # cdn_client argument entirely. Building one cost ~125s: its
+                    # constructor calls load_licenses() -> get_product_info(), which
+                    # drives the SteamClient's gevent hub, and gevent hubs are bound
+                    # to the thread that first drove them. This runs on a download
+                    # worker, not the dedicated steamcm thread that owns the client,
+                    # so it always hit gevent's 25s timeout, 5 times over, and then
+                    # fell through to the ManifestHub-only branch.
                     for _depot_id, _manifest_id in list(manifests_dict.items()):
                         _dc_mf = _dc2 / f"{_depot_id}_{_manifest_id}.manifest"
                         _dest_mf = _staging / f"{_depot_id}_{_manifest_id}.manifest"
@@ -1760,10 +1761,14 @@ def _bridge_download_game_ddmod(bridge, app_id, source, lua_path, manifest_folde
                             _step4_shutil.copy2(_dest_mf, _dc_mf)
                             continue
                         print(f"Fetching manifest for depot {_depot_id} ({_manifest_id})...")
-                        if _cdn2:
-                            _data = _md2.download_single_manifest(_depot_id, _manifest_id, cdn_client=_cdn2, app_id=_eff_app_id)
-                        else:
-                            _data = _md2._try_manifesthub_combined(_depot_id, _manifest_id, _eff_app_id)
+                        # ManifestHub + GitHub first: they run in parallel and are
+                        # the two sources that answer quickly. Only if both miss do
+                        # we pay for the wider sequential cascade (GMRC mirrors ->
+                        # steampipe request code), which is slow when steampipe is
+                        # unreachable — it 504s from some networks.
+                        _data = _md2._try_manifesthub_combined(_depot_id, _manifest_id, _eff_app_id)
+                        if _data is None:
+                            _data = _md2.download_single_manifest(_depot_id, _manifest_id, app_id=_eff_app_id)
                         if _data:
                             _written = _md2._write_manifest_to_depotcache(_data, _depot_id, _manifest_id)
                             if _written and not _dest_mf.exists():

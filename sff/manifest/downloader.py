@@ -303,6 +303,19 @@ class ManifestDownloader:
         return DepotManifestMap(manifest_ids)
 
     def get_cdn_client(self, max_retries = 5):
+        """Build a Steam CDNClient. Currently unused — see the warning below.
+
+        WARNING: this must run on the thread that owns the SteamClient's
+        gevent hub (the dedicated "steamcm" thread in sff.network.steam_client),
+        otherwise it ALWAYS fails. CDNClient.__init__ calls load_licenses() ->
+        steam.get_product_info(), and gevent binds a hub to the thread that
+        first drove it, so from any other thread the greenlet never gets
+        scheduled and every attempt burns gevent's full 25s timeout.
+
+        No caller needs this: download_single_manifest ignores its cdn_client
+        argument and fetches manifests over plain HTTP. If you do reintroduce a
+        caller, marshal it with sff.network.steam_client._run_on_cm_thread.
+        """
         for attempt in range(max_retries):
             try:
                 cdn = CDNClient(self.provider.client)
@@ -509,7 +522,7 @@ class ManifestDownloader:
         self,
         depot_id: str,
         manifest_id: str,
-        cdn_client = None,
+        cdn_client = None,  # unused; kept for call-site compatibility
         app_id = "",
     ):
         if self.use_hubcap:
