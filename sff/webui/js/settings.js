@@ -657,6 +657,7 @@ window.Settings = (function() {
             'setting-store-show-software': 'store_show_software',
             'setting-block-nsfw': 'store_block_nsfw',
             'setting-auto-enable-new-game-updates': 'auto_enable_updates_new_games',
+            'setting-skip-native': 'skip_native_downloader',
         };
         Object.keys(checkboxes).forEach(function(id) {
             var el = document.getElementById(id);
@@ -908,6 +909,11 @@ window.Settings = (function() {
                 // A9: default ON unless explicitly stored as False
                 var autoUpd = settings.auto_update_check;
                 _setCheckbox('setting-auto-update-check', (autoUpd === '' || autoUpd === undefined) ? 'True' : autoUpd);
+                // The native CDN downloader can't mint a Steam CDN auth
+                // token, so it 403s and falls through to DDMod anyway.
+                // Default ON unless explicitly stored as False.
+                var skipNative = settings.skip_native_downloader;
+                _setCheckbox('setting-skip-native', (skipNative === '' || skipNative === undefined) ? 'True' : skipNative);
                 // 6.2.4 hotfix: default ON unless explicitly stored as
                 // False. Tray behaviour matches the manifest_preserve
                 // / auto_update_check pattern. Users who want X = quit

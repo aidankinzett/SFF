@@ -338,58 +338,75 @@ def run_download(
             pass
         return False, 0
 
-    native_failed: list = []
+    # The native CDN downloader cannot mint a Steam CDN auth token (the
+    # bundled steam lib has no API for it), so SteamCache hosts answer its
+    # chunk requests with HTTP 403 and every depot ends up falling through
+    # to DDMod anyway — after a long CDN timeout. Skipping straight to DDMod
+    # is the default; flip the setting off to exercise the native path.
     try:
-        from sff.downloads.native_downloader import download_depot as _native_dl
-        print_fn(Fore.CYAN + "\n[Native] Starting Steam CDN download (no .NET required)" + Style.RESET_ALL)
-        for depot_id in selected_depots:
-            depot_id_str = str(depot_id)
-            manifest_id = manifests.get(depot_id_str)
-            key_data = depots.get(depot_id_str, {})
-            key = key_data.get("key", "") if isinstance(key_data, dict) else ""
-            if not manifest_id or not key:
-                print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native needs manifest+key, deferring to DDMod" + Style.RESET_ALL)
-                native_failed.append(depot_id)
-                continue
-            print_fn(
-                Fore.CYAN
-                + f"\n--- Downloading depot {depot_id_str} (native) ---"
-                + Style.RESET_ALL
-            )
-            try:
-                manifest_path = None
-                mf = MANIFESTS_TMP / f"{depot_id_str}_{manifest_id}.manifest"
-                if mf.exists():
-                    manifest_path = mf
-                ok, size = _native_dl(
-                    appid, depot_id_str, manifest_id, key, download_dir,
-                    print_fn=print_fn, os_filter=os_name or ("linux" if sys.platform.startswith("linux") else "windows"),
-                    steam_path=steam_path,
-                    manifest_path=manifest_path,
-                )
-                if ok:
-                    print_fn(Fore.GREEN + f"Depot {depot_id_str} downloaded ({size:,} bytes)" + Style.RESET_ALL)
-                else:
-                    print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native download failed, deferring to DDMod" + Style.RESET_ALL)
+        from sff.core.storage.settings import get_setting
+        from sff.core.structs import Settings
+        _skip_native = get_setting(Settings.SKIP_NATIVE_DOWNLOADER)
+        skip_native = True if _skip_native is None else bool(_skip_native)
+    except Exception:
+        skip_native = True
+
+    native_failed: list = []
+    if skip_native:
+        native_failed = list(selected_depots)
+        print_fn(Fore.CYAN + "\n[Native] Skipped by setting — using DepotDownloaderMod" + Style.RESET_ALL)
+    else:
+        try:
+            from sff.downloads.native_downloader import download_depot as _native_dl
+            print_fn(Fore.CYAN + "\n[Native] Starting Steam CDN download (no .NET required)" + Style.RESET_ALL)
+            for depot_id in selected_depots:
+                depot_id_str = str(depot_id)
+                manifest_id = manifests.get(depot_id_str)
+                key_data = depots.get(depot_id_str, {})
+                key = key_data.get("key", "") if isinstance(key_data, dict) else ""
+                if not manifest_id or not key:
+                    print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native needs manifest+key, deferring to DDMod" + Style.RESET_ALL)
                     native_failed.append(depot_id)
-            except Exception as e:
-                print_fn(Fore.RED + f"Native download failed for depot {depot_id_str}: {e}" + Style.RESET_ALL)
-                native_failed.append(depot_id)
-        if not native_failed:
-            try:
-                KEYS_TMP.unlink(missing_ok=True)
-            except Exception:
-                pass
-            total_size = _calculate_dir_size(download_dir)
-            print_fn(Fore.CYAN + f"Total size on disk: {total_size:,} bytes" + Style.RESET_ALL)
-            return True, total_size
-        print_fn(Fore.YELLOW + f"[Native] {len(native_failed)} depot(s) failed — using DepotDownloaderMod as backup" + Style.RESET_ALL)
-    except ImportError:
-        native_failed = list(selected_depots)
-        print_fn(Fore.YELLOW + "[Native] Native downloader not available, falling back to DDMod" + Style.RESET_ALL)
-    except Exception as e:
-        native_failed = list(selected_depots)
-        print_fn(Fore.YELLOW + f"[Native] Init failed ({e}), falling back to DDMod" + Style.RESET_ALL)
+                    continue
+                print_fn(
+                    Fore.CYAN
+                    + f"\n--- Downloading depot {depot_id_str} (native) ---"
+                    + Style.RESET_ALL
+                )
+                try:
+                    manifest_path = None
+                    mf = MANIFESTS_TMP / f"{depot_id_str}_{manifest_id}.manifest"
+                    if mf.exists():
+                        manifest_path = mf
+                    ok, size = _native_dl(
+                        appid, depot_id_str, manifest_id, key, download_dir,
+                        print_fn=print_fn, os_filter=os_name or ("linux" if sys.platform.startswith("linux") else "windows"),
+                        steam_path=steam_path,
+                        manifest_path=manifest_path,
+                    )
+                    if ok:
+                        print_fn(Fore.GREEN + f"Depot {depot_id_str} downloaded ({size:,} bytes)" + Style.RESET_ALL)
+                    else:
+                        print_fn(Fore.YELLOW + f"Depot {depot_id_str}: native download failed, deferring to DDMod" + Style.RESET_ALL)
+                        native_failed.append(depot_id)
+                except Exception as e:
+                    print_fn(Fore.RED + f"Native download failed for depot {depot_id_str}: {e}" + Style.RESET_ALL)
+                    native_failed.append(depot_id)
+            if not native_failed:
+                try:
+                    KEYS_TMP.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                total_size = _calculate_dir_size(download_dir)
+                print_fn(Fore.CYAN + f"Total size on disk: {total_size:,} bytes" + Style.RESET_ALL)
+                return True, total_size
+            print_fn(Fore.YELLOW + f"[Native] {len(native_failed)} depot(s) failed — using DepotDownloaderMod as backup" + Style.RESET_ALL)
+        except ImportError:
+            native_failed = list(selected_depots)
+            print_fn(Fore.YELLOW + "[Native] Native downloader not available, falling back to DDMod" + Style.RESET_ALL)
+        except Exception as e:
+            native_failed = list(selected_depots)
+            print_fn(Fore.YELLOW + f"[Native] Init failed ({e}), falling back to DDMod" + Style.RESET_ALL)
 
     ddmod_depots = list(native_failed) if native_failed else list(selected_depots)
 

@@ -1319,6 +1319,10 @@ start YourGame-Shipping.exe</pre>
                         <input type="checkbox" id="setting-parallel">
                         <span>Use Parallel Downloads</span>
                     </label>
+                    <label class="checkbox-option" data-tooltip="Go straight to DepotDownloaderMod instead of trying the built-in CDN downloader first. The native downloader cannot authenticate with Steam's CDN, so leaving this on avoids a long timeout before the fallback runs. Requires .NET 9.">
+                        <input type="checkbox" id="setting-skip-native" checked>
+                        <span>Skip native downloader (use DepotDownloaderMod)</span>
+                    </label>
                 </div>
                 <div class="input-group">
                     <label>Exclude from Manifest Updates:</label>
